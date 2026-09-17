@@ -165,6 +165,20 @@ public class SctpMultiChannelImpl extends SctpMultiChannel
         return this;
     }
 
+    /* Called by send() to bind an unbound channel before sending.
+     * Takes receiveLock then sendLock, the same order used by bind()/
+     * bindUnbindAddress(), and re-checks isBound() under those locks so
+     * that a second, racing caller simply does nothing instead of getting
+     * an AlreadyBoundException. */
+    private void implicitBind() throws IOException {
+        synchronized (receiveLock) {
+            synchronized (sendLock) {
+                if (!isBound())
+                    bind(null, 0);
+            }
+        }
+    }
+
     @Override
     public SctpMultiChannel bindAddress(InetAddress address)
             throws IOException {
@@ -750,11 +764,19 @@ public class SctpMultiChannelImpl extends SctpMultiChannel
         if (messageInfo == null)
             throw new IllegalArgumentException("messageInfo cannot be null");
 
+        /* Bind before acquiring sendLock: bind() takes receiveLock then
+         * sendLock, so doing this while already holding sendLock would
+         * acquire the two locks in the opposite order to bind()/
+         * bindUnbindAddress() and risk a deadlock against a concurrent
+         * direct call to bind()/bindAddress()/unbindAddress(). The check
+         * and the call to bind() are done atomically under receiveLock and
+         * sendLock so that two racing implicit binds don't cause a spurious
+         * AlreadyBoundException. */
+        if (!isBound())
+            implicitBind();
+
         synchronized (sendLock) {
             ensureOpen();
-
-            if (!isBound())
-                bind(null, 0);
 
             int n = 0;
             try {
