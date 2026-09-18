@@ -129,6 +129,22 @@ final class ConnectionDesc {
     /**
      * If ConnectionDesc is IDLE and has expired, close the corresponding
      * PooledConnection.
+     * Returns the PooledConnection this descriptor wraps.
+     * Used by Connections.expire() to close the connection after this
+     * object's own monitor has been released (see expire(long)).
+     */
+    PooledConnection getConnection() {
+        return conn;
+    }
+
+
+    /**
+     * If ConnectionDesc is IDLE and has expired, mark it EXPIRED.
+     * Closing of the underlying connection is left to the caller (see
+     * Connections.expire()): doing it here, while still holding this
+     * object's monitor, would call back into LdapClient/Connections in the
+     * opposite lock order to releasePooledConnection()'s entry.tryUse()/
+     * release() calls (Connections.lock -&gt; this) and risk a deadlock.
      *
      * @param threshold a connection that has been idle before this time
      *     have expired.
@@ -143,7 +159,6 @@ final class ConnectionDesc {
                 d("expire(): expired");
 
                 state = EXPIRED;
-                conn.closeConnection();  // Close real connection
 
                 return true;  // Expiration successful
             } else {

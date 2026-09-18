@@ -199,6 +199,9 @@ final class Connections implements PoolCallback {
      * public because implemented as part of PoolCallback.
      */
     public boolean releasePooledConnection(PooledConnection conn) {
+        boolean found;
+        boolean shouldClose = false;
+
         lock.lock();
         try {
             ConnectionDesc entry;
@@ -206,7 +209,8 @@ final class Connections implements PoolCallback {
 
             d("release(): ", conn);
 
-            if (loc >= 0) {
+            found = (loc >= 0);
+            if (found) {
                 // Found entry
 
                 if (closed || (prefSize > 0 && conns.size() > prefSize)) {
@@ -217,7 +221,7 @@ final class Connections implements PoolCallback {
 
                     // size must be >= 2 so don't worry about empty list
                     conns.remove(entry);
-                    conn.closeConnection();
+                    shouldClose = true;
                 } else {
                     d("release(): release ", conn);
                     td("Release ", conn);
@@ -228,12 +232,23 @@ final class Connections implements PoolCallback {
                 }
                 connectionsAvailable.signalAll();
                 d("release(): notify");
-                return true;
             }
         } finally {
             lock.unlock();
         }
-        return false;
+
+        // conn.closeConnection() is synchronized on the LdapClient itself,
+        // and close()/closeConnection() call back into this class while
+        // holding that same monitor. Calling it here while still holding
+        // "lock" would acquire the two locks in the opposite order and
+        // risk a deadlock against a concurrent close()/closeConnection()
+        // call on the same connection, so it is deferred until "lock" has
+        // been released.
+        if (shouldClose) {
+            conn.closeConnection();
+        }
+
+        return found;
     }
 
     /**
@@ -296,6 +311,12 @@ final class Connections implements PoolCallback {
                 expired.add(entry);
                 td("expire(): Expired ", entry);
             }
+        }
+
+         // Close the real connections now that no ConnectionDesc's own
+        // monitor is held (see ConnectionDesc.expire()).
+        for (ConnectionDesc entry : expired) {
+            entry.getConnection().closeConnection();
         }
 
         lock.lock();
