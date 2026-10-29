@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -680,6 +680,18 @@ final class DTLSInputRecord extends InputRecord implements DTLSRecord {
                 // validate the first or subsequent ClientHello message
                 if ((hsf = valHello(hsf, hsf.messageSeq == 0)) == null) {
                     return;
+                }
+            }
+
+            // All fragments of one message must agree on its total length.
+            for (RecordFragment fragment : bufferedFragments) {
+                if (fragment instanceof HandshakeFragment previous &&
+                        previous.recordEpoch == hsf.recordEpoch &&
+                        previous.messageSeq == hsf.messageSeq &&
+                        (previous.handshakeType != hsf.handshakeType ||
+                         previous.messageLength != hsf.messageLength)) {
+                    throw new SSLProtocolException(
+                            "Inconsistent DTLS handshake fragments");
                 }
             }
 
